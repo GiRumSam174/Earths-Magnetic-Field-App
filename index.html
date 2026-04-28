@@ -114,98 +114,62 @@
     <div id="error-msg"></div>
 
     <script>
-        const startBtn = document.getElementById('start-btn');
-        const errorMsg = document.getElementById('error-msg');
+const startBtn = document.getElementById('start-btn');
+const errorMsg = document.getElementById('error-msg');
 
-        // DOM Elements for Magnetometer
-        const magX = document.getElementById('mag-x');
-        const magY = document.getElementById('mag-y');
-        const magZ = document.getElementById('mag-z');
-        const magTotal = document.getElementById('mag-total');
+async function startSensors() {
+    errorMsg.textContent = "";
 
-        // DOM Elements for Orientation
-        const dirAlpha = document.getElementById('dir-alpha');
-        const dirBeta = document.getElementById('dir-beta');
-        const dirGamma = document.getElementById('dir-gamma');
-
-        let magnetometer = null;
-
-        function startSensors() {
-            errorMsg.textContent = "";
-
-            // 1. Initialize Magnetometer
-            if ('Magnetometer' in window) {
-                try {
-                    magnetometer = new Magnetometer({ frequency: 10 });
-                    
-                    magnetometer.addEventListener('reading', () => {
-                        const x = magnetometer.x;
-                        const y = magnetometer.y;
-                        const z = magnetometer.z;
-                        
-                        // Calculate total magnitude: B = sqrt(x^2 + y^2 + z^2)
-                        const magnitude = Math.sqrt(x*x + y*y + z*z);
-
-                        magX.textContent = x.toFixed(2);
-                        magY.textContent = y.toFixed(2);
-                        magZ.textContent = z.toFixed(2);
-                        magTotal.textContent = magnitude.toFixed(2) + " µT";
-                    });
-
-                    magnetometer.addEventListener('error', event => {
-                        errorMsg.textContent = `Magnetometer Error: ${event.error.name} - ${event.error.message}`;
-                    });
-
-                    magnetometer.start();
-                } catch (error) {
-                    errorMsg.textContent = `Magnetometer initialization failed: ${error.message}`;
-                }
-            } else {
-                errorMsg.innerHTML += "Magnetometer API not supported by this browser.<br>";
+    // 1. Request Magnetometer Permission (The Missing Link)
+    if (navigator.permissions && navigator.permissions.query) {
+        try {
+            const result = await navigator.permissions.query({ name: 'magnetometer' });
+            if (result.state === 'denied') {
+                errorMsg.innerHTML += "Permission to use magnetometer was denied.<br>";
+                return;
             }
-
-            // 2. Initialize Device Orientation (Inclinometer/Compass)
-            
-            // For iOS 13+ devices, we must request permission explicitly
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                DeviceOrientationEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            window.addEventListener('deviceorientation', handleOrientation);
-                        } else {
-                            errorMsg.innerHTML += "Orientation permission denied.<br>";
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                // Non-iOS 13+ devices
-                window.addEventListener('deviceorientationabsolute', handleOrientation) || 
-                window.addEventListener('deviceorientation', handleOrientation);
-            }
-
-            startBtn.textContent = "Sensors Running";
-            startBtn.disabled = true;
-            startBtn.style.backgroundColor = "#555";
+        } catch (e) {
+            console.log("Permissions API not supported for magnetometer, trying anyway...");
         }
+    }
 
-        function handleOrientation(event) {
-            // Alpha: Compass direction (0 to 360)
-            // Beta: Front-to-back tilt (-180 to 180)
-            // Gamma: Left-to-right tilt (-90 to 90)
-            
-            let alpha = event.alpha;
-            
-            // Webkit compass heading fallback for iOS
-            if (event.webkitCompassHeading) {
-                alpha = event.webkitCompassHeading;
-            }
+    // 2. Initialize Magnetometer
+    if ('Magnetometer' in window) {
+        try {
+            // Some browsers require a user gesture to start sensors
+            const mag = new Magnetometer({ frequency: 10 });
+            mag.addEventListener('reading', () => {
+                const x = mag.x;
+                const y = mag.y;
+                const z = mag.z;
+                const magnitude = Math.sqrt(x*x + y*y + z*z);
 
-            if (alpha !== null) dirAlpha.textContent = alpha.toFixed(1) + "°";
-            if (event.beta !== null) dirBeta.textContent = event.beta.toFixed(1) + "°";
-            if (event.gamma !== null) dirGamma.textContent = event.gamma.toFixed(1) + "°";
+                document.getElementById('mag-x').textContent = x.toFixed(2);
+                document.getElementById('mag-y').textContent = y.toFixed(2);
+                document.getElementById('mag-z').textContent = z.toFixed(2);
+                document.getElementById('mag-total').textContent = magnitude.toFixed(2) + " µT";
+            });
+            mag.start();
+        } catch (error) {
+            errorMsg.innerHTML += `Mag Error: ${error.message}<br>`;
         }
+    } else {
+        errorMsg.innerHTML += "Magnetometer API not supported. <br><i>Try enabling 'Generic Sensor Extra Classes' in chrome://flags</i><br>";
+    }
 
-        startBtn.addEventListener('click', startSensors);
+    // 3. Orientation Logic (as before)
+    if (typeof DeviceOrientationEvent !== 'undefined') {
+        window.addEventListener('deviceorientation', (event) => {
+            if (event.alpha !== null) {
+                document.getElementById('dir-alpha').textContent = event.alpha.toFixed(1) + "°";
+                document.getElementById('dir-beta').textContent = event.beta.toFixed(1) + "°";
+                document.getElementById('dir-gamma').textContent = event.gamma.toFixed(1) + "°";
+            }
+        });
+    }
+}
+
+startBtn.addEventListener('click', startSensors);
     </script>
 </body>
 </html>
