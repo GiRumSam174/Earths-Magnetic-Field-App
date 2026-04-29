@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Earth Magnetic Field & Inclinometer</title>
+    <title>Earth Magnetic Field & Inclination</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: #121212;
             color: #ffffff;
             margin: 0;
@@ -29,24 +29,34 @@
             max-width: 400px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
+        .system-check {
+            border-left: 4px solid #ffb300;
+        }
+        .status-row {
+            margin: 8px 0;
+            font-size: 0.9rem;
+            color: #cccccc;
+        }
         .data-row {
             display: flex;
             justify-content: space-between;
             margin: 10px 0;
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             border-bottom: 1px solid #333;
             padding-bottom: 5px;
         }
-        .label {
-            color: #aaaaaa;
-        }
+        .label { color: #aaaaaa; }
         .value {
             font-weight: bold;
             font-family: monospace;
         }
         .highlight {
             color: #4CAF50;
-            font-size: 1.4rem;
+            font-size: 1.3rem;
+        }
+        .inclination {
+            color: #2196F3;
+            font-size: 1.3rem;
         }
         button {
             background-color: #4CAF50;
@@ -56,120 +66,166 @@
             font-size: 1.2rem;
             border-radius: 8px;
             cursor: pointer;
-            margin-top: 10px;
             width: 100%;
             max-width: 400px;
         }
-        button:active {
-            background-color: #45a049;
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
         }
-        #error-msg {
-            color: #ff5252;
-            text-align: center;
-            margin-top: 15px;
-        }
+        .pass { color: #4CAF50; font-weight: bold; }
+        .fail { color: #ff5252; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h1>Magnetic Field & Orientation</h1>
+    <h1>Magnetometer Diagnostics</h1>
+
+    <div class="card system-check">
+        <h3>Pre-Flight Check</h3>
+        <div class="status-row" id="check-https">HTTPS Context: Checking...</div>
+        <div class="status-row" id="check-api">Magnetometer API: Checking...</div>
+        <div class="status-row" id="check-perm">Permissions: Checking...</div>
+    </div>
 
     <div class="card">
-        <h3>Magnetometer (µT)</h3>
+        <h3>Magnetic Field Data</h3>
         <div class="data-row">
-            <span class="label">X-Axis:</span>
-            <span class="value" id="mag-x">0.00</span>
+            <span class="label">X-Axis (Right):</span>
+            <span class="value" id="mag-x">--</span>
         </div>
         <div class="data-row">
-            <span class="label">Y-Axis:</span>
-            <span class="value" id="mag-y">0.00</span>
+            <span class="label">Y-Axis (Forward):</span>
+            <span class="value" id="mag-y">--</span>
         </div>
         <div class="data-row">
-            <span class="label">Z-Axis:</span>
-            <span class="value" id="mag-z">0.00</span>
+            <span class="label">Z-Axis (Up/Down):</span>
+            <span class="value" id="mag-z">--</span>
         </div>
         <div class="data-row">
             <span class="label">Magnitude:</span>
-            <span class="value highlight" id="mag-total">0.00</span>
+            <span class="value highlight" id="mag-total">--</span>
+        </div>
+        <div class="data-row">
+            <span class="label">Inclination (Dip):</span>
+            <span class="value inclination" id="mag-inc">--</span>
         </div>
     </div>
 
-    <div class="card">
-        <h3>Inclinometer / Direction</h3>
-        <div class="data-row">
-            <span class="label">Heading (Alpha):</span>
-            <span class="value" id="dir-alpha">0.0°</span>
-        </div>
-        <div class="data-row">
-            <span class="label">Pitch (Beta):</span>
-            <span class="value" id="dir-beta">0.0°</span>
-        </div>
-        <div class="data-row">
-            <span class="label">Roll (Gamma):</span>
-            <span class="value" id="dir-gamma">0.0°</span>
-        </div>
-    </div>
-
-    <button id="start-btn">Start Sensors</button>
-    <div id="error-msg"></div>
+    <button id="start-btn" disabled>Waiting for checks...</button>
 
     <script>
-const startBtn = document.getElementById('start-btn');
-const errorMsg = document.getElementById('error-msg');
+        const btn = document.getElementById('start-btn');
+        let isReady = false;
 
-async function startSensors() {
-    errorMsg.textContent = "";
+        // Diagnostic UI elements
+        const uiHttps = document.getElementById('check-https');
+        const uiApi = document.getElementById('check-api');
+        const uiPerm = document.getElementById('check-perm');
 
-    // 1. Request Magnetometer Permission (The Missing Link)
-    if (navigator.permissions && navigator.permissions.query) {
-        try {
-            const result = await navigator.permissions.query({ name: 'magnetometer' });
-            if (result.state === 'denied') {
-                errorMsg.innerHTML += "Permission to use magnetometer was denied.<br>";
-                return;
+        // Data UI elements
+        const uiX = document.getElementById('mag-x');
+        const uiY = document.getElementById('mag-y');
+        const uiZ = document.getElementById('mag-z');
+        const uiTotal = document.getElementById('mag-total');
+        const uiInc = document.getElementById('mag-inc');
+
+        // 1. Run Pre-flight Checks immediately on load
+        async function runDiagnostics() {
+            let passed = true;
+
+            // Check HTTPS / Secure Context
+            if (window.isSecureContext) {
+                uiHttps.innerHTML = `HTTPS Context: <span class="pass">Secure (OK)</span>`;
+            } else {
+                uiHttps.innerHTML = `HTTPS Context: <span class="fail">Insecure (Failed)</span>`;
+                passed = false;
             }
-        } catch (e) {
-            console.log("Permissions API not supported for magnetometer, trying anyway...");
-        }
-    }
 
-    // 2. Initialize Magnetometer
-    if ('Magnetometer' in window) {
-        try {
-            // Some browsers require a user gesture to start sensors
-            const mag = new Magnetometer({ frequency: 10 });
-            mag.addEventListener('reading', () => {
-                const x = mag.x;
-                const y = mag.y;
-                const z = mag.z;
-                const magnitude = Math.sqrt(x*x + y*y + z*z);
-
-                document.getElementById('mag-x').textContent = x.toFixed(2);
-                document.getElementById('mag-y').textContent = y.toFixed(2);
-                document.getElementById('mag-z').textContent = z.toFixed(2);
-                document.getElementById('mag-total').textContent = magnitude.toFixed(2) + " µT";
-            });
-            mag.start();
-        } catch (error) {
-            errorMsg.innerHTML += `Mag Error: ${error.message}<br>`;
-        }
-    } else {
-        errorMsg.innerHTML += "Magnetometer API not supported. <br><i>Try enabling 'Generic Sensor Extra Classes' in chrome://flags</i><br>";
-    }
-
-    // 3. Orientation Logic (as before)
-    if (typeof DeviceOrientationEvent !== 'undefined') {
-        window.addEventListener('deviceorientation', (event) => {
-            if (event.alpha !== null) {
-                document.getElementById('dir-alpha').textContent = event.alpha.toFixed(1) + "°";
-                document.getElementById('dir-beta').textContent = event.beta.toFixed(1) + "°";
-                document.getElementById('dir-gamma').textContent = event.gamma.toFixed(1) + "°";
+            // Check API existence
+            if ('Magnetometer' in window) {
+                uiApi.innerHTML = `Magnetometer API: <span class="pass">Found (OK)</span>`;
+            } else {
+                uiApi.innerHTML = `Magnetometer API: <span class="fail">Missing/Disabled</span>`;
+                passed = false;
             }
-        });
-    }
-}
 
-startBtn.addEventListener('click', startSensors);
+            // Check Permissions
+            if (navigator.permissions && navigator.permissions.query) {
+                try {
+                    const status = await navigator.permissions.query({ name: 'magnetometer' });
+                    if (status.state === 'denied') {
+                        uiPerm.innerHTML = `Permissions: <span class="fail">Denied</span>`;
+                        passed = false;
+                    } else if (status.state === 'prompt') {
+                        uiPerm.innerHTML = `Permissions: <span class="pass">Needs Prompt</span>`;
+                    } else {
+                        uiPerm.innerHTML = `Permissions: <span class="pass">Granted</span>`;
+                    }
+                } catch (e) {
+                    uiPerm.innerHTML = `Permissions: <span class="fail">Not queryable via API</span>`;
+                }
+            } else {
+                uiPerm.innerHTML = `Permissions: API not supported.`;
+            }
+
+            // Final check evaluation
+            if (passed) {
+                btn.textContent = "Start Sensor";
+                btn.disabled = false;
+                isReady = true;
+            } else {
+                btn.textContent = "Hardware/Browser Unavailable";
+            }
+        }
+
+        // 2. Start Sensor Function
+        async function startSensor() {
+            if (!isReady) return;
+
+            try {
+                const mag = new Magnetometer({ frequency: 10 });
+                
+                mag.addEventListener('reading', () => {
+                    const x = mag.x;
+                    const y = mag.y;
+                    const z = mag.z;
+                    
+                    // Total Magnitude
+                    const magnitude = Math.sqrt(x**2 + y**2 + z**2);
+                    
+                    // Inclination (Dip Angle)
+                    // H is the horizontal component
+                    const h = Math.sqrt(x**2 + y**2);
+                    const inclinationRad = Math.atan2(z, h);
+                    const inclinationDeg = inclinationRad * (180 / Math.PI);
+
+                    // Update UI
+                    uiX.textContent = x.toFixed(2);
+                    uiY.textContent = y.toFixed(2);
+                    uiZ.textContent = z.toFixed(2);
+                    uiTotal.textContent = magnitude.toFixed(2) + " µT";
+                    uiInc.textContent = inclinationDeg.toFixed(2) + "°";
+                });
+
+                mag.addEventListener('error', (e) => {
+                    alert(`Sensor Error: ${e.error.name} - ${e.error.message}`);
+                });
+
+                mag.start();
+                
+                btn.textContent = "Reading Data...";
+                btn.disabled = true;
+
+            } catch (err) {
+                alert(`Failed to initialize: ${err.message}`);
+            }
+        }
+
+        // Initialize checks
+        runDiagnostics();
+        btn.addEventListener('click', startSensor);
+
     </script>
 </body>
 </html>
